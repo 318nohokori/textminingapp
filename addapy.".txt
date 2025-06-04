@@ -1,0 +1,66 @@
+import streamlit as st
+import pandas as pd
+from janome.tokenizer import Tokenizer
+from collections import Counter
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from io import BytesIO
+
+# --- テキスト処理 ---
+def extract_words(texts):
+    t = Tokenizer()
+    words = []
+    for text in texts:
+        tokens = t.tokenize(str(text))
+        words += [token.base_form for token in tokens 
+                  if token.part_of_speech.startswith("名詞")]
+    return words
+
+def count_words(words, top_n=30):
+    return Counter(words).most_common(top_n)
+
+def cluster_texts(texts, n_clusters=3):
+    vectorizer = TfidfVectorizer(tokenizer=lambda x: extract_words([x]), stop_words="english")
+    X = vectorizer.fit_transform(texts)
+    model = KMeans(n_clusters=n_clusters, random_state=42)
+    labels = model.fit_predict(X)
+    return labels
+
+# --- メインアプリ ---
+st.title("日本語テキストマイニング（クラスタリング + ワードクラウド）")
+
+uploaded_file = st.file_uploader("CSVファイルをアップロードしてください（例：'comment'列）", type="csv")
+
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    column = st.selectbox("分析対象の列を選択", df.columns)
+    texts = df[column].dropna().tolist()
+    
+    # 単語抽出・頻度
+    words = extract_words(texts)
+    freqs = count_words(words)
+    
+    st.subheader("ワードクラウド")
+    wc = WordCloud(font_path="C:/Windows/Fonts/meiryo.ttc", background_color="white", width=800, height=400)
+    wc.generate_from_frequencies(dict(freqs))
+    plt.figure(figsize=(10, 5))
+    plt.imshow(wc, interpolation='bilinear')
+    plt.axis("off")
+    st.pyplot(plt)
+    
+    st.subheader("クラスタリング")
+    n_clusters = st.slider("クラスタ数", 2, 10, 3)
+    labels = cluster_texts(texts, n_clusters)
+    df["Cluster"] = labels
+    st.dataframe(df[[column, "Cluster"]])
+    
+    st.subheader("結果のExcelダウンロード")
+    freq_df = pd.DataFrame(freqs, columns=["Word", "Frequency"])
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name="Clustered Texts", index=False)
+        freq_df.to_excel(writer, sheet_name="Word Frequencies", index=False)
+    st.download_button("📥 Excelファイルをダウンロード", data=output.getvalue(),
+                       file_name="text_mining_result.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
